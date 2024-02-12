@@ -20,6 +20,8 @@ Kinship check can be found in [https://github.com/Gleeson-Lab/MM_DNM/blob/main/D
 
 # Pipeline for de novo variant calling
 
+De novo SNV calling from WXS and WGS could be found in [https://github.com/Gleeson-Lab/WGS_DNM](https://github.com/Gleeson-Lab/WGS_DNM).
+
 -------------------------------------
 
 # Pipeline for spatial transcriptomic
