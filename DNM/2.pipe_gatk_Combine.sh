@@ -8,7 +8,6 @@
 module load GenomeAnalysisTK
 echo $CHR
 
-mkdir -p $OutPath"tmp_SSC1_"$CHR
 
 gatk --java-options "-Xmx90G -Xms90G -XX:ParallelGCThreads=4" CombineGVCFs \
 --variant $VARIANT \
