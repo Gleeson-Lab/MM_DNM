@@ -18,4 +18,4 @@ gatk --java-options "-Xms32G -Xmx32G -XX:ParallelGCThreads=4" GenotypeGVCFs \
 --use-jdk-deflater \
 --output /oasis/tscc/scratch/sak015/NTD/$Output".interval"$INTERVAL".genotyped.vcf.gz" 
 
-#--variant $OutPath/$Output".interval"$INTERVAL".vcf.gz" \
+
