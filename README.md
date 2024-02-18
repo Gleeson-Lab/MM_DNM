@@ -14,8 +14,6 @@
 
 The pipeline to perform processing of the WXS sequencing data can be found in [https://github.com/Gleeson-Lab/wxs_pipeline](https://github.com/Gleeson-Lab/wxs_pipeline).
 
-Kinship check can be found in [https://github.com/Gleeson-Lab/MM_DNM/blob/main/DNM/check_kinship.py](https://github.com/Gleeson-Lab/MM_DNM/blob/main/DNM/check_kinship.py).
-
 -------------------------------------
 
 # Pipeline for de novo variant calling
