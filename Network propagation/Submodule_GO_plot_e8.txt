@@ -1,0 +1,13 @@
+Cluster	# background genes	# genes	category	chart color	description	FDR value
+Rho GTPase	449	15	Reactome Pathways		RHO GTPase cycle	3.90E-14
+Cillum	136	10	GO Biological Process		Cilium-dependent cell motility	4.39E-14
+Cillum	384	12	GO Biological Process		Microtubule-based movement	4.39E-14
+Cillum	803	14	GO Biological Process		Microtubule-based process	4.39E-14
+Rho GTPase	672	16	Reactome Pathways		Signaling by Rho GTPases	2.05E-13
+Rho GTPase	183	11	Reactome Pathways		RAC1 GTPase cycle	1.06E-12
+Rho GTPase	609	15	GO Biological Process		Actin filament-based process	2.17E-11
+Rho GTPase	547	14	GO Biological Process		Actin cytoskeleton organization	7.92E-11
+Rho GTPase	2540	21	Reactome Pathways		Signal Transduction	1.53E-10
+Cillum	39	6	GO Biological Process		Axonemal dynein complex assembly	2.47E-09
+Rho GTPase	154	8	Reactome Pathways		CDC42 GTPase cycle	2.45E-08
+Rho GTPase	551	11	Reactome Pathways		Axon guidance	6.45E-08
