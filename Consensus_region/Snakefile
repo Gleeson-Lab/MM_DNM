@@ -1,0 +1,336 @@
+# list of all sample names
+samples = glob_wildcards("../input/bams/{sample}.bam").sample
+
+# ped_file contains information on pedigree of samples
+# batch file indicates which batch each sample belongs to
+ped_file = "../input/" + glob_wildcards("../input/{sample_ped}.ped").sample_ped[0] + ".ped"
+batch_file = "../input/" + glob_wildcards("../input/{sample_batch}.batch").sample_batch[0] + ".batch"
+
+# all chromosomes except Y
+# 2 percentages of overlap used when intersecting families within each batch
+chroms = ['1','10','11','12','13','14','15','16','17','18','19','2','20','21','22','3','4','5','6','7','8','9','X']
+percentages = ['70','90']
+
+def get_batches(batch_file):
+    """
+    extracts a dictionary of samples and their batches from batch_file
+    """
+    with open(batch_file) as sample_batch:
+        sample_batches = {}
+        for line in sample_batch:
+            info = line[:-1].split('\t')
+            sample = info[0]
+            batch = info[1]
+            sample_batches[sample] = batch
+    return sample_batches
+
+def get_families(ped_file,batch_file):
+    """
+    extracts 2 dictionaries. The first is a dictionary of trios with a list
+    of child, father, and mother for each trio. In case of multiple children,
+    families are labeled with family_child to indicate a trio. The second 
+    dictionary indicates the batch that a family belongs to.
+    """
+    families = {}
+    family_batches = {
+        'Kibar': [],
+        'SSC': [],
+        'MuratOld': [],
+        'Murat': [],
+        'Macrogen': [],
+        'UCI': [],
+        'Regeneron': []
+    }
+    sample_batches = get_batches(batch_file)
+    with open(ped_file) as ped:
+        for line in ped:
+            info = line[:-1].split('\t')
+            if info[2] == '0' and info[3] == '0':
+                continue
+            family = info[0]
+            child = info[1]
+            father = info[2]
+            mother = info[3]
+            if family in families.keys():
+                child_1 = families.pop(family)[0]
+                child_2 = child
+                family_1 = family + "_" + child_1
+                family_2 = family + "_" + child_2
+                families[family_1] = [child_1,father,mother]
+                families[family_2] = [child_2,father,mother]
+                if '.' in child_1 or '.' in child_2:
+                    family_batches['SSC'].remove(family)
+                    family_batches['SSC'].append(family_1)
+                    family_batches['SSC'].append(family_2)
+                else:
+                    family_batches[sample_batches[child_1]].remove(family)
+                    family_batches[sample_batches[child_1]].append(family_1)
+                    family_batches[sample_batches[child_2]].append(family_2)
+            else:
+                families[family] = [child,father,mother]
+                if '.' in child:
+                    family_batches['SSC'].append(family)
+                else:
+                    family_batches[sample_batches[child]].append(family)
+    return families, family_batches
+
+def get_family_bedgs(wildcards, families=families):
+    """
+    gets a list of coverage bedg files for a specific family
+    """
+    bedgs = []
+    for i in families[wildcards.family]:
+        bedgs.append("../output/individual_coverage/" + i + ".sorted.bedg.gz")
+    return bedgs
+
+def get_family(wildcards, families=families):
+    """
+    gets a list of samples for a specific family
+    """
+    return " ".join(families[wildcards.family])
+
+def get_batch(wildcards, family_batches=family_batches):
+    """
+    gets a list a families for a specific batch
+    """
+    return list(family_batches[wildcards.batch])
+
+def get_batch_names(wildcards, family_batches=family_batches):
+    """
+    converts the list from get_batch to a space seperated string
+    """
+    fams = get_batch(wildcards)
+    return ' '.join(fams)
+
+def get_batch_families(wildcards, family_batches=family_batches):
+    """
+    gets a list of bedg files from minimized families split by chromosome
+    """
+    fams = get_batch(wildcards)
+    return expand("../output/minimized_families/{family}.chr{chrom}.bedg",family=fams,chrom=wildcards.chrom)
+
+families, family_batches = get_families(ped_file,batch_file)
+
+
+rule all:
+    """
+    rule to generate final output
+    """
+    input:
+        expand("../output/per_batch_{percentage}/all_batches.bed",percentage=percentages),
+
+rule individual_coverage:
+    """
+    calculate individual coverage from bam file for each sample using
+    bedtools genomecov
+    https://bedtools.readthedocs.io/en/latest/content/tools/genomecov.html
+    """
+    input:
+        "../input/bams/{sample}.bam",
+    output:
+        "../output/individual_coverage/{sample}.bedg.gz"
+    log:
+        "../logs/individual_coverage/{sample}.log"
+    resources:
+        walltime=8
+    threads: 1
+    shell:
+        "bedtools genomecov -bg -ibam {input} | gzip > {output}"
+
+rule sort:
+    """
+    sort the bedg file using bedtools sort for consistency downstream
+    https://bedtools.readthedocs.io/en/latest/content/tools/sort.html
+    """
+    input:
+        "../output/individual_coverage/{sample}.bedg.gz",
+    output:
+        "../output/individual_coverage/{sample}.sorted.bedg.gz",
+    log:
+        "../logs/sort/{sample}.log",
+    resources:
+        walltime=1
+    threads: 1
+    shell:
+        "zcat {input} | grep -v _ | bedtools sort | gzip > {output} 2> {log}"
+
+rule merge:
+    """
+    merge each trio into a combined bedg using bedtools unionbedg
+    https://bedtools.readthedocs.io/en/latest/content/tools/unionbedg.html
+    """
+    input:
+        get_family_bedgs,
+    output:
+        "../output/merged_families/{family}.bedg.gz"
+    params:
+        get_family,
+    log:
+        "../logs/merged_families/{family}.log"
+    resources:
+        walltime=8
+    threads: 1
+    shell:
+        "bedtools unionbedg -i {input} -header -names {params} | gzip > {output} 2> {log}"
+
+rule intersect_family:
+    """
+    extract rows from merged family bedg where all members of a family 
+    have coverage >= 12
+    """
+    input:
+        "../output/merged_families/{family}.bedg.gz"
+    output:
+        "../output/intersected_families/{family}.bedg"
+    params:
+        f = 12,
+        p = 1
+    log:
+        "../logs/intersected_families/{family}.log"
+    resources:
+        walltime=8
+    threads: 1
+    shell:
+        "python scripts/bedg_coverage_filter.py -f {params.f} -p {params.p} "
+        "-i {input} -o {output} 2> {log}"
+
+
+rule minimize:
+    """
+    colapse the columns of the intersected family bedg file to the minimum 
+    coverage of that row. Useful for efficiency downstream
+    """
+    input:
+        "../output/intersected_families/{family}.bedg"
+    output:
+        "../output/minimized_families/{family}.bedg"
+    log:
+        "../logs/minimized_families/{family}.log"
+    resources:
+        walltime=8
+    threads: 1
+    shell:
+        "python scripts/min_cov.py -i {input} -o {output} 2> {log}"
+
+rule split_minimized:
+    """
+    split the minimized family bedg by chromosome for parallel proccessing
+    """
+    input:
+        "../output/minimized_families/{family}.bedg"
+    output:
+        "../output/minimized_families/{family}.chr{chrom}.bedg"
+    params:
+        chrom="{chrom}"
+    log:
+        "../logs/minimized_families/{family}.chr{chrom}.log"
+    resources:
+        walltime=1
+    threads: 1
+    shell:
+        "grep -P \"chr{params.chrom}\t\" {input} > {output} 2> {log}"
+
+
+rule merge_per_batch_per_chr:
+    """
+    merge all minimized family bedgs for each batch using bedtools unionbedg
+    https://bedtools.readthedocs.io/en/latest/content/tools/unionbedg.html 
+    """
+    input:
+        get_batch_families
+    output:
+        "../output/per_batch/merged_{batch}.chr{chrom}.bedg.gz"
+    params:
+        get_batch_names,
+    log:
+        "../logs/per_batch/merged_{batch}.chr{chrom}.bedg.gz"
+    resources:
+        walltime=200
+    threads: 3
+    shell:
+        "bedtools unionbedg -i {input} -header -names {params} | gzip > {output} 2> {log}"
+
+rule intersect_per_batch_per_chr:
+    """
+    extract rows from merged batch bedg where at least <p> percentage of 
+    families have coverage >= 12
+    """
+    input:
+        "../output/per_batch/merged_{batch}.chr{chrom}.bedg.gz"
+    output:
+        "../output/per_batch_{percentage}/intersected_{batch}.chr{chrom}.bedg"
+    params:
+        f = 12,
+        p = "0." + "{percentage}",
+    log:
+        "../logs/per_batch_{percentage}/intersected_{batch}.chr{chrom}.log"
+    resources:
+        walltime=24
+    threads: 1
+    shell:
+        "python scripts/bedg_coverage_filter.py -f {params.f} -p {params.p} "
+        "-i {input} -o {output} 2> {log}"
+
+rule combined_bed_per_batch_per_chr:
+    """
+    convert batch bedg to bed file
+    """
+    input:
+        "../output/per_batch_{percentage}/intersected_{batch}.chr{chrom}.bedg"
+    output:
+        "../output/per_batch_{percentage}/intersected_{batch}.chr{chrom}.bed"
+    resources:
+        walltime=1
+    threads: 1
+    shell:
+        "cut -f 1-3 -d$'\t' {input} | grep -v 'start' > {output}"
+
+rule intersect_batch_beds:
+    """
+    count number of batches covering each region using bedtools multiinter
+    https://bedtools.readthedocs.io/en/latest/content/tools/multiinter.html
+    """
+    input:
+        expand("../output/per_batch_{{percentage}}/intersected_{batch}.chr{{chrom}}.bed",batch=family_batches.keys()),
+    output:
+        "../output/per_batch_{percentage}/all_batches.chr{chrom}.bedg"
+    log:
+        "../logs/per_batch_{percentage}/all_batches.chr{chrom}.log"
+    resources:
+        walltime=24
+    threads: 1
+    shell:
+        "bedtools multiinter -i {input} > {output} 2> {log}"
+
+rule intersect_batch_beds_make_bed:
+    """
+    extract bed file where all batch beds had coverage
+    """
+    input:
+        "../output/per_batch_{percentage}/all_batches.chr{chrom}.bedg",
+    output:
+        "../output/per_batch_{percentage}/all_batches.chr{chrom}.bed",
+    log:
+        "../logs/per_batch_{percentage}/all_batches_bed.chr{chrom}.log",
+    resources:
+        walltime=24
+    threads: 1
+    shell:
+        "cat {input} | awk -F'\t' '$4==7' | cut -f 1-3 -d$'\t' > {output} 2> {log}"
+
+rule merge_intersected_batch_chroms:
+    """
+    combine intersected batch bed files for each chromosome into a final
+    bed file
+    """
+    input:
+        expand("../output/per_batch_{{percentage}}/all_batches.chr{chrom}.bed",chrom=chroms),
+    output:
+        "../output/per_batch_{percentage}/all_batches.bed",
+    log:
+        "../logs/per_batch_{percentage}/combine_all_chroms.log"
+    resources:
+        walltime=24
+    threads: 1
+    shell:
+        "cat {input} | grep -v chrom > {output} 2> {log}"
