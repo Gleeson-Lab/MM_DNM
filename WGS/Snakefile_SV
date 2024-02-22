@@ -1,0 +1,388 @@
+import os
+from glob import glob
+
+samples = glob_wildcards("../input/GLE_{sample}.cram").sample
+ped_file = "../input/trios.ped"
+singularity_path = "/projects/ps-gleesonlab8/Pipelines/singularity/SV/"
+windows=['10000','100000']
+
+family_dict = {}
+
+def parse_ped(ped_file):
+    with open(ped_file) as ped:
+        for line in ped:
+            info = line[:-1].split('\t')
+            if info[-1] == "2":
+                family_dict[info[0] + '_' + info[1]] = [info[1],info[2],info[3]]
+
+def get_family(wildcards):
+    return family_dict[wildcards.family]
+
+def get_family_list(wildcards):
+    return ','.join(family_dict[wildcards.family])
+
+def get_family_cram(wildcards):
+    temp = list(expand("../input/{family}.cram",family=get_family(wildcards)))
+    return temp
+
+def get_survivor_sample_list(wildcards):
+    temp = [
+        "../output/manta/" + wildcards.sample + "/results/variants/diploidSV.vcf",
+        "../output/delly/" + wildcards.sample + ".vcf",
+        "../output/smoove/" + wildcards.sample + "-smoove.genotyped.vcf",
+    ]
+    return temp
+
+def get_survivor_family_list(wildcards):
+    temp = list(expand("../output/survivor/merged/{sample}.vcf",sample=get_family(wildcards)))
+    return temp
+
+def get_extracted_bam(wildcards):
+    family = get_family(wildcards.family)
+    index = family.index(wildcards.sample)
+    family_member = ''
+    if index == 0:
+        family_member = 'proband'
+    elif index == 1:
+        family_member = 'father'
+    elif index == 2:
+        family_member = 'mother'
+    return "../output/extracted_bams/" + wildcards.family + "/" + family_member + "-" + wilcards.sample + ".bam"
+
+def get_extracted_bais(families):
+    out_list = []
+    for i in families:
+        family = family_dict[i]
+        for j in family:
+            index = family.index(j)
+            family_member=''
+            if index == 0:
+                family_member='proband'
+            elif index == 1:
+                family_member='father'
+            elif index == 2:
+                family_member='mother'
+            out_list.append("../output/extracted_bams/" + i + "/" + family_member + "-" + j + ".bam.bai")
+    return out_list
+
+parse_ped(ped_file)
+for i in family_dict.keys():
+    family = family_dict[i]
+    lst="../output/survivor/list/" + family[0] + ".txt"
+    with open(lst,'w') as survivor_list:
+        survivor_list.write("../output/manta/" + family[0] + "/results/variants/diploidSV.vcf\n")
+        survivor_list.write("../output/delly/" + family[0] + ".vcf\n")
+        survivor_list.write("../output/smoove/" + family[0] + "-smoove.genotyped.vcf\n")
+    lst="../output/survivor/list/" + family[1] + ".txt"
+    with open(lst,'w') as survivor_list:
+        survivor_list.write("../output/manta/" + family[1] + "/results/variants/diploidSV.vcf\n")
+        survivor_list.write("../output/delly/" + family[1] + ".vcf\n")
+        survivor_list.write("../output/smoove/" + family[1] + "-smoove.genotyped.vcf\n")
+    lst="../output/survivor/list/" + family[2] + ".txt"
+    with open(lst,'w') as survivor_list:
+        survivor_list.write("../output/manta/" + family[2] + "/results/variants/diploidSV.vcf\n")
+        survivor_list.write("../output/delly/" + family[2] + ".vcf\n")
+        survivor_list.write("../output/smoove/" + family[2] + "-smoove.genotyped.vcf\n")
+    lst="../output/survivor/list/" + i + ".txt"
+    with open(lst,'w') as survivor_list:
+        survivor_list.write("../output/survivor/merged/" + family[0] + ".vcf\n")
+        survivor_list.write("../output/survivor/merged/" + family[1] + ".vcf\n")
+        survivor_list.write("../output/survivor/merged/" + family[2] + ".vcf\n")
+
+#samples = ['CTRL_6353','CTRL_6803','CTRL_7431']
+for i in samples:
+    lst="../output/survivor/list/" + i + ".txt"
+    with open(lst,'w') as survivor_list:
+        survivor_list.write("../output/manta/" + i + "/results/variants/diploidSV.vcf\n")
+        survivor_list.write("../output/delly/" + i + ".vcf\n")
+        survivor_list.write("../output/smoove/" + i + "-smoove.genotyped.vcf\n")
+
+rule all:
+    input:
+        get_extracted_bais(family_dict.keys()),
+
+# configure manta
+rule config_manta:
+    input:
+        "../input/{sample}.cram",
+    output:
+        "../output/manta/{sample}/runWorkflow.py",
+    singularity:
+        singularity_path + "SV.sif",
+    params:
+        ref="../resources/Homo_sapiens_assembly38.fasta",
+        dir="../output/manta/{sample}",
+    shell:
+        "rm -rf {params.dir} && "
+        "configManta.py --bam {input} "
+        "--referenceFasta {params.ref} "
+        "--runDir {params.dir}"
+
+# run manta
+rule run_manta:
+    input:
+        "../output/manta/{sample}/runWorkflow.py",
+    output:
+        "../output/manta/{sample}/results/variants/diploidSV.vcf.gz",
+    log:
+        o="../logs/manta/{sample}.o",
+        e="../logs/manta/{sample}.e",
+    singularity:
+        singularity_path + "SV.sif",
+    resources:
+        walltime=48,
+        mem_mb=64000,
+    threads: 4
+    shell:
+        "{input} --jobs {threads} > {log.o} 2> {log.e}"
+
+# run delly
+rule delly_call:
+    input:
+        "../input/{sample}.cram",
+    output:
+        "../output/delly/{sample}.bcf",
+    log:
+        o="../logs/delly/call/{sample}.o",
+        e="../logs/delly/call/{sample}.e",
+    singularity:
+        singularity_path + "SV.sif",
+    params:
+        ref="../resources/Homo_sapiens_assembly38.fasta",
+        exclude="../resources/delly_exclude.human.hg38.excl.tsv",
+    resources:
+        walltime=48,
+        mem_mb=16000,
+    threads: 1 # delly parallelizes by sample . since we're doing 1 sample at a time this should be 1
+    shell:
+        "export OMP_NUM_THREADS={threads} && "
+        "delly call -g {params.ref} -x {params.exclude} "
+        "-o {output} {input} > {log.o} 2> {log.e}"
+
+# run smoove
+rule smoove_call:
+    input:
+        "../input/{sample}.cram",
+    output:
+        "../output/smoove/{sample}-smoove.genotyped.vcf.gz",
+    singularity:
+        singularity_path + "smoove.sif",
+    log:
+        o="../logs/smoove/call/{sample}.o",
+        e="../logs/smoove/call/{sample}.e",
+    params:
+        dir="../output/smoove/",
+        ref="../resources/Homo_sapiens_assembly38.fasta",
+        exclude="../resources/smoove_exclude.exclude.cnvnator_100bp.GRCh38.20170403.bed"
+    resources:
+        walltime=48,
+        mem_mb=16000,
+    threads: 1
+    shell:
+        "smoove call --outdir {params.dir} --exclude {params.exclude} "
+        "--name {wildcards.sample} --fasta {params.ref} -p {threads} "
+        "--genotype {input} > {log.o} 2> {log.e}"
+
+# filter for only PASS variants
+rule manta_PASS_to_vcf:
+    input:
+        "../output/manta/{sample}/results/variants/diploidSV.vcf.gz",
+    output:
+        "../output/manta/{sample}/results/variants/diploidSV.vcf",
+    shell:
+        "bcftools view -f 'PASS,.' -O v {input} | bcftools sort -o {output}"
+
+# filter for only PASS variants
+rule delly_PASS_to_vcf:
+    input:
+        "../output/delly/{sample}.bcf",
+    output:
+        "../output/delly/{sample}.vcf",
+    shell:
+        "bcftools view -f 'PASS,.' -O v {input} | bcftools sort -o {output}"
+
+# filter for only PASS variants
+rule smoove_PASS_to_vcf:
+    input:
+        "../output/smoove/{sample}-smoove.genotyped.vcf.gz",
+    output:
+        "../output/smoove/{sample}-smoove.genotyped.vcf",
+    shell:
+        "bcftools view -f 'PASS,.' -O v {input} | bcftools sort -o {output}"
+
+# merge manta delly and smoove into a single vcf for each sample
+rule survivor_merge_sample:
+    #max distance between breakpoints (0-1 percent of length, 1- number of bp)
+    #Minimum number of supporting caller
+    #Take the type into account (1==yes, else no)
+    #Take the strands of SVs into account (1==yes, else no)
+    #Estimate distance based on the size of SV (1==yes, else no).
+    #Minimum size of SVs to be taken into account.
+    input:
+        get_survivor_sample_list,
+    output:
+        "../output/survivor/merged/{sample}.vcf"
+    log:
+        o="../logs/survivor/merge/{sample}.o",
+        e="../logs/survivor/merge/{sample}.e",        
+    singularity:
+        singularity_path + "SV.sif",
+    params:
+        lst="../output/survivor/list/{sample}.txt",
+        dist=1000,
+        callers=0,
+        type=0,
+        strands=0,
+        estimate=0,
+        size=50,
+    shell:
+        "SURVIVOR merge {params.lst} {params.dist} {params.callers} {params.type} "
+        "{params.strands} {params.estimate} {params.size} {output} > {log.o} 2> {log.e}"
+
+# merge family
+rule survivor_merge_family:
+    #max distance between breakpoints (0-1 percent of length, 1- number of bp)
+    #Minimum number of supporting caller
+    #Take the type into account (1==yes, else no)
+    #Take the strands of SVs into account (1==yes, else no)
+    #Estimate distance based on the size of SV (1==yes, else no).
+    #Minimum size of SVs to be taken into account.
+    input:
+        get_survivor_family_list,
+    output:
+        "../output/survivor/merged/{family}.vcf"
+    log:
+        o="../logs/survivor/merge/{family}.o",
+        e="../logs/survivor/merge/{family}.e",        
+    singularity:
+        singularity_path + "SV.sif",
+    params:
+        lst="../output/survivor/list/{family}.txt",
+        dist=1000,
+        callers=0,
+        type=0,
+        strands=0,
+        estimate=0,
+        size=50,
+    shell:
+        "SURVIVOR merge {params.lst} {params.dist} {params.callers} {params.type} "
+        "{params.strands} {params.estimate} {params.size} {output} > {log.o} 2> {log.e}"
+
+# extract snv vcf for family from large multisample vcf
+rule extract_family_snv:
+    input:
+        "../input/snv_indel.vcf.gz",
+    output:
+        "../output/snv/{family}.vcf",
+    params:
+        s=get_family_list,
+    threads: 4
+    shell:
+        "bcftools view -s {params.s} -f 'PASS,.' --types 'snps' -o {output} {input}"
+
+# filter home refs out of vcf
+rule filter_family_snv:
+    input:
+        "../output/snv/{family}.vcf",
+    output:
+        "../output/snv/{family}.noref.vcf.gz",
+    params:
+        o="../output/snv/{family}.noref.vcf",
+    shell:
+        "python scripts/filter_00_genotypes.py -i {input} -o {params.o} && "
+        "bgzip {params.o} && "
+        "tabix -p vcf {output} "
+
+# filter SV smaller than 50 kb since the ones larger than 50 kb are picked up by CNV callers
+rule filter_50000:
+    input:
+        "../output/survivor/merged/{family}.vcf",
+    output:
+        "../output/survivor/merged/{family}.50000.vcf",
+    shell:
+        "python scripts/sv2_prefilter.py -i {input} -o {output}"
+
+# run sv2
+rule sv2:
+    input:
+        ped="../input/trios.sex.ped",
+        cram=get_family_cram,
+        sv="../output/survivor/merged/{family}.50000.vcf",
+        snp="../output/snv/{family}.noref.vcf.gz",
+    output:
+        "../output/sv2/{family}/sv2_genotypes/sv2_genotypes/sv2_genotypes.vcf"
+    log:
+        out="../logs/sv2/{family}.o",
+        err="../logs/sv2/{family}.e",
+    conda:
+        "/home/azoopatel/miniconda3/envs/sv2/"
+    params:
+        genome="hg38",
+        dir="../output/sv2/{family}/sv2_genotypes/"
+    resources:
+        walltime=48,
+        mem_mb=16000,
+    threads: 4
+    shell:
+        "sv2 -i {input.cram} -v {input.sv} -snv {input.snp} "
+        "-p {input.ped} -g {params.genome} -merge "
+        "-O {params.dir} -L {log.out} 2> {log.err}"
+
+# DNM filter
+rule denovo_filter_SV:
+    input:
+        vcf="../output/sv2/{family}/sv2_genotypes/sv2_genotypes/sv2_genotypes.vcf",
+        ped="../input/trios.ped",
+    output:
+        "../output/DNM/{family}.vcf",
+    log:
+        o="../logs/DNM/{family}.o",
+        e="../logs/DNM/{family}.e",
+    resources:
+        walltime=1,
+    threads: 1
+    shell:
+        "python scripts/SV_DNM.py -i {input.vcf} -p {input.ped} "
+        "-o {output} > {log.o} 2> {log.e}"
+
+# extract a bed file of DNMs
+rule denovo_bed:
+    input:
+        vcf="../output/DNM/{family}.vcf",
+        genome="../resources/Homo_sapiens_assembly38.genome",
+    output:
+        "../output/DNM/{family}.bed",
+    resources:
+        walltime=1,
+    threads: 1
+    shell:
+        "bcftools query -f '%CHROM\t%POS\t%INFO/END\n' {input.vcf}"
+        "| bedtools slop -b 10000 -g {input.genome} > {output}"
+
+# extract bams for viewing in IGV
+rule family_extract_bam:
+    input:
+        bed="../output/DNM/{family}.bed",
+        ref="../resources/Homo_sapiens_assembly38.fasta",
+        cram="../input/{sample}.cram",
+    output:
+        "../output/extracted_bams/{family}/{member}-{sample}.bam"
+    resources:
+        walltime=8,
+    threads: 1
+    shell:
+        "samtools view -b -o {output} -L {input.bed} "
+        "--reference {input.ref} {input.cram}"
+
+# index bams
+rule index_extracted_bam:
+    input:
+        "../output/extracted_bams/{family}/{member}-{sample}.bam"
+    output:
+        "../output/extracted_bams/{family}/{member}-{sample}.bam.bai"
+    resources:
+        walltime=8,
+    threads: 1
+    shell:
+        "samtools index {input}"
+

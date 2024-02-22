@@ -1,0 +1,410 @@
+import os
+from glob import glob
+
+samples = glob_wildcards("../input/GLE_{sample}.cram").sample
+ped_file = "../input/trios.ped"
+singularity_path = "/projects/ps-gleesonlab8/Pipelines/singularity/SV/"
+windows=['10000','100000']
+chroms = ['','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','X','Y','M']
+
+family_dict = {}
+
+# extract family info from ped
+def parse_ped(ped_file):
+    with open(ped_file) as ped:
+        for line in ped:
+            info = line[:-1].split('\t')
+            if info[-1] == "2":
+                family_dict[info[0] + '_' + info[1]] = [info[1],info[2],info[3]]
+
+# get family external ids
+def get_family(wildcards):
+    return family_dict[wildcards.family]
+
+# get list of family crams
+def get_family_cram(wildcards):
+    temp = list(expand("../input/{family}.cram",family=get_family(wildcards)))
+    return temp
+
+# get list of family CNVpytor vcfs
+def get_CNVpytor_family_list(wildcards):
+    temp = list(expand("../output/CNVpytor/{sample}/{sample}.CNVpytor." + wildcards.window + ".vcf",sample=get_family(wildcards)))
+    return temp
+
+# get list of family CNVpytor files
+def get_CNVpytor_family_pytors(wildcards):
+    temp = list(expand("../output/CNVpytor/{sample}/{sample}.pytor",sample=get_family(wildcards)))
+    return temp
+
+# get regions for DNM plots
+def get_plot_regions(wildcards):
+    regions=""
+    bed="../output/DNM/" + wildcards.family + "." + wildcards.window + ".AnnotSV.DNM.bed"
+    with open(bed) as bed_file:
+        for line in bed_file:
+            info = line[:-1].split('\t')
+            regions += info[0] + ':' + info[1] + '-' + info[2] + ','
+    # if theres no regions then use the start of chr22 as a default otherwise it will error
+    if regions == "":
+        regions = "chr22:100000-200000"
+    if regions[-1] == ',':
+        regions = regions[:-1]
+    return regions
+
+# get pngs
+def get_plot_out(wildcards):
+    return "../output/plots/" + wildcards.family + '/' + wildcards.family + '.' + wildcards.window + '.png'
+
+# get extended regions for DNM plots
+# this is for showing the area surrounding the DNM as a visual aid
+def get_plot_regions_extended(wildcards):
+    regions=""
+    bed="../output/DNM/" + wildcards.family + "." + wildcards.window + ".AnnotSV.DNM.extended.bed"
+    with open(bed) as bed_file:
+        for line in bed_file:
+            info = line[:-1].split('\t')
+            regions += info[0] + ':' + info[1] + '-' + info[2] + ','
+    # if theres no regions then use the start of chr22 as a default otherwise it will error
+    if regions == "":
+        regions = "chr22:100000-200000"
+    if regions[-1] == ',':
+        regions = regions[:-1]
+    return regions
+
+# get pngs for extended
+def get_plot_out_extended(wildcards):
+    return "../output/plots/" + wildcards.family + '/extended_' + wildcards.family + '.' + wildcards.window + '.png'
+
+# get ammount to extend
+def get_extend(wildcards):
+    return str(int(wildcards.window)*10)
+
+
+parse_ped(ped_file)
+for i in family_dict.keys():
+    family = family_dict[i]
+    for window in windows:
+        lst="../output/survivor/list/" + i + "." + window + ".txt"
+        with open(lst,'w') as survivor_list:
+            survivor_list.write("../output/CNVpytor/" + family[0] + "/" + family[0] + ".CNVpytor." + window + ".vcf\n")
+            survivor_list.write("../output/CNVpytor/" + family[1] + "/" + family[1] + ".CNVpytor." + window + ".vcf\n")
+            survivor_list.write("../output/CNVpytor/" + family[2] + "/" + family[2] + ".CNVpytor." + window + ".vcf\n")
+
+rule all:
+    input:
+        expand("../output/plots/{family}/{family}.{window}.plot.done",family=family_dict.keys(),window=windows),
+        expand("../output/plots/{family}/extended_{family}.{window}.plot.done",family=family_dict.keys(),window=windows),
+
+# read depth
+rule CNVpytor_rd:
+    input:
+        cram="../input/{sample}.cram",
+        ref="../resources/Homo_sapiens_assembly38.fasta",
+    output:
+        "../output/CNVpytor/{sample}/{sample}.root_created",
+    log:
+        o="../logs/rd/{sample}.o",
+        e="../logs/rd/{sample}.e",
+    params:
+        root="../output/CNVpytor/{sample}/{sample}.pytor",
+        chroms=' chr'.join(chroms), 
+    threads: 8
+    resources:
+        walltime=8,
+    conda:
+        "/home/azoopatel/miniconda3/envs/CNVpytor/"
+    shell:
+        "cnvpytor -root {params.root} -rd {input.cram} "
+        "-chrom {params.chroms} -T {input.ref} -j {threads} "
+        "> {log.o} 2> {log.e} && touch {output}"
+
+# hisotgrams
+rule CNVpytor_his:
+    input:
+        "../output/CNVpytor/{sample}/{sample}.root_created",
+    output:
+        "../output/CNVpytor/{sample}/{sample}.his_done",
+    log:
+        o="../logs/his/{sample}.o",
+        e="../logs/his/{sample}.e",
+    params:
+        root="../output/CNVpytor/{sample}/{sample}.pytor",
+        chroms=' chr'.join(chroms), 
+        windows="10000 100000",
+    threads: 1
+    resources:
+        walltime=8,
+    conda:
+        "/home/azoopatel/miniconda3/envs/CNVpytor/"
+    shell:
+        "cnvpytor -root {params.root} -chrom {params.chroms} "
+        "-his {params.windows} "
+        "> {log.o} 2> {log.e} && touch {output}"
+
+# partition read depth historgrams
+rule CNVpytor_partition:
+    input:
+        "../output/CNVpytor/{sample}/{sample}.his_done",
+    output:
+        "../output/CNVpytor/{sample}/{sample}.partition_done",
+    log:
+        o="../logs/partition/{sample}.o",
+        e="../logs/partition/{sample}.e",
+    params:
+        root="../output/CNVpytor/{sample}/{sample}.pytor",
+        chroms=' chr'.join(chroms), 
+        windows="10000 100000",
+    threads: 1
+    resources:
+        walltime=8,
+    conda:
+        "/home/azoopatel/miniconda3/envs/CNVpytor/"
+    shell:
+        "cnvpytor -root {params.root} -chrom {params.chroms} "
+        "-partition {params.windows} "
+        "> {log.o} 2> {log.e} && touch {output}"
+
+# call CNVs
+rule CNVpytor_call:
+    input:
+        "../output/CNVpytor/{sample}/{sample}.partition_done",
+    output:
+        "../output/CNVpytor/{sample}/{sample}.calls.{window}.tsv",
+    log:
+        e="../logs/call/{sample}.{window}.e",
+    params:
+        root="../output/CNVpytor/{sample}/{sample}.pytor",
+        chroms=' chr'.join(chroms), 
+        window="{window}",
+    threads: 1
+    resources:
+        walltime=8,
+    conda:
+        "/home/azoopatel/miniconda3/envs/CNVpytor/"
+    shell:
+        "cnvpytor -root {params.root} -chrom {params.chroms} "
+        "-call {params.window} > {output} 2> {log.e} && "
+        "if [ ! -s {output} ]; then exit 1; fi" # sometimes CNVpytor will call nothing which is an error but
+
+# filter low quality calls
+rule CNVpytor_view:
+    input:
+        "../output/CNVpytor/{sample}/{sample}.calls.{window}.tsv",
+    output:
+        "../output/CNVpytor/{sample}/{sample}.CNVpytor.{window}.vcf",
+    log:
+        o="../logs/call/{sample}.{window}.o",
+        e="../logs/call/{sample}.{window}.e",
+    params:
+        root="../output/CNVpytor/{sample}/{sample}.pytor",
+        window="{window}",
+        Q0_range="-1 0.5",
+        p_range="0 0.0001",
+        p_N="0 0.5",
+        size_range="50000 inf",
+        dG_range="100000 inf",
+        chroms=' chr'.join(chroms), 
+    threads: 1
+    resources:
+        walltime=8,
+    conda:
+        "/home/azoopatel/miniconda3/envs/CNVpytor/"
+    shell:
+        """
+        cnvpytor -root {params.root} -chrom {params.chroms} -view {params.window} << EOF 
+        set Q0_range {params.Q0_range}        # filter calls with more than half not uniquely mapped reads
+        set p_range {params.p_range}          # filter non-confident calls
+        set p_N {params.p_N}                  # filter calls with more than 50% Ns in reference genome
+        set size_range {params.size_range}    # filter calls smaller than 50kbp
+        set dG_range {params.dG_range}        # filter calls close to gaps in reference genome (<100kbp)
+        set print_filename {output}           # output filename (xlsx, tsv or vcf)
+        set annotate                          # turn on annotation (optional - takes a lot of time)
+        print calls                           # generate output file with filtered calls
+        quit                                  # EOF must be at start of line in heredoc, don't move it
+EOF
+        > {log.o} 2> {log.e}
+        """
+
+# merge family CNVpytor vcfs
+rule survivor_merge_CNVpytor_family:
+    #max distance between breakpoints (0-1 percent of length, 1- number of bp)
+    #Minimum number of supporting caller
+    #Take the type into account (1==yes, else no)
+    #Take the strands of SVs into account (1==yes, else no)
+    #Estimate distance based on the size of SV (1==yes, else no).
+    #Minimum size of SVs to be taken into account.
+    input:
+        get_CNVpytor_family_list,
+    output:
+        "../output/survivor/merged/{family}.{window}.unfixed.vcf"
+    log:
+        o="../logs/survivor/merge/{family}.{window}.o",
+        e="../logs/survivor/merge/{family}.{window}.e",        
+    singularity:
+        singularity_path + "SV.sif",
+    params:
+        dist=50000,
+        callers=0,
+        type=0,
+        strands=0,
+        estimate=0,
+        size=50000,
+        lst="../output/survivor/list/{family}.{window}.txt",
+    shell:
+        "SURVIVOR merge {params.lst} {params.dist} {params.callers} {params.type} "
+        "{params.strands} {params.estimate} {params.size} {output} > {log.o} 2> {log.e}"
+
+# fix sample naming in merged vcf
+rule fix_sample_names:
+    input:
+        "../output/survivor/merged/{family}.{window}.unfixed.vcf",
+    output:
+        "../output/survivor/merged/{family}.{window}.vcf",
+    params:
+        unfixed="../output/survivor/merged/{family}.{window}.unfixed.samples",
+        fixed="../output/survivor/merged/{family}.{window}.fixed.samples",
+    shell:
+        "bcftools query -l {input} > {params.unfixed} && "
+        "python scripts/fix_samples_header.py -i {params.unfixed} -o {params.fixed} && "
+        "bcftools reheader -s {params.fixed} -o {output} {input}"
+
+# annotate CNVs
+rule CNVpytor_AnnotSV:
+    input:
+        "../output/survivor/merged/{family}.{window}.vcf",
+    output:
+        "../output/AnnotSV/{family}.{window}/{family}.{window}.AnnotSV.nochr.vcf",
+    log:
+        o="../logs/AnnotSV/{family}.{window}.o",
+        e="../logs/AnnotSV/{family}.{window}.e",        
+    params:
+        annotsv="/home/azoopatel/tools/AnnotSV/bin/AnnotSV",
+        file="{family}.{window}.AnnotSV.nochr",
+        input="../../survivor/merged/{family}.{window}.vcf",
+        dir="../output/AnnotSV/{family}.{window}/",
+        genome="GRCh38",
+    resources:
+        wallltime=1,
+    threads: 1
+    shell:
+        "export ANNOTSV=/home/azoopatel/tools/AnnotSV/ && "
+        "rm -r {params.dir} && "
+        "mkdir {params.dir} && "
+        "cd {params.dir} && "
+        "{params.annotsv} "
+        "-genomeBuild {params.genome} "
+        "-svInputFile {params.input} "
+        "-outputFile {params.file} "
+        "-outputDir ./ "
+        "-vcf 1 > ../../{log.o} 2> ../../{log.e} && "
+        "touch {params.file}.vcf && "
+        "if [ ! -s {params.file}.vcf ]; then cp {params.input} {params.file}.vcf; fi"
+
+# add chr back to vcf
+rule add_chr:
+    input:
+        "../output/AnnotSV/{family}.{window}/{family}.{window}.AnnotSV.nochr.vcf",
+    output:
+        "../output/AnnotSV/{family}.{window}/{family}.{window}.AnnotSV.vcf",
+    resources:
+        wallltime=1,
+    threads: 1
+    run:
+        with open(input[0]) as in_vcf:
+            with open(output[0],'w') as out_vcf:
+                for line in in_vcf:
+                    if line[0] == '#':
+                        out_vcf.write(line)
+                    else:
+                        out_vcf.write("chr" + line)
+
+# filter DNMs 
+rule denovo_filter_CNVpytor:
+    input:
+        vcf="../output/AnnotSV/{family}.{window}/{family}.{window}.AnnotSV.vcf",
+        ped="../input/trios.ped",
+    output:
+        "../output/DNM/{family}.{window}.AnnotSV.DNM.vcf",
+    log:
+        o="../logs/DNM/{family}.{window}.o",
+        e="../logs/DNM/{family}.{window}.e",
+    resources:
+        walltime=1,
+    threads: 1
+    shell:
+        "python scripts/CNV_DNM.py -i {input.vcf} -p {input.ped} "
+        "-o {output} > {log.o} 2> {log.e}"
+
+# extract bed files for plotting
+rule bcftools_extract_bed:
+    input:
+        "../output/DNM/{family}.{window}.AnnotSV.DNM.vcf",
+    output:
+        "../output/DNM/{family}.{window}.AnnotSV.DNM.bed",
+    resources:
+        wallltime=1,
+    threads: 1
+    shell:
+        "bcftools query -f '%CHROM\\t%POS\\t%END\\n' {input} > {output}"
+
+# extract extended bed files for plotting
+rule bedtools_extend_bed:
+    input:
+        bed="../output/DNM/{family}.{window}.AnnotSV.DNM.bed",
+        ref="../resources/Homo_sapiens_assembly38.genome",
+    output:
+        "../output/DNM/{family}.{window}.AnnotSV.DNM.extended.bed",
+    resources:
+        wallltime=1,
+    threads: 1
+    params:
+        b=get_extend,
+    shell:
+        "bedtools slop -b {params.b} -g {input.ref} -i {input.bed} > {output}"
+
+# plot DNMs for visual checking
+rule CNVpytor_plot:
+    input:
+        bed="../output/DNM/{family}.{window}.AnnotSV.DNM.bed",
+    output:
+        "../output/plots/{family}/{family}.{window}.plot.done",
+    log:
+        o="../logs/plot/{family}.{window}.o",
+        e="../logs/plot/{family}.{window}.e",        
+    params:
+        pytors=get_CNVpytor_family_pytors,
+        regions=get_plot_regions,
+        out=get_plot_out,
+    resources:
+        wallltime=1,
+    threads: 1
+    conda:
+        "/home/azoopatel/miniconda3/envs/CNVpytor/"
+    shell:
+        "cnvpytor -root {params.pytors} -plot regions {params.regions} "
+        "{wildcards.window} -o {params.out} "
+        "> {log.o} 2> {log.e} && touch {output}"
+
+# plot extended DNMs for visual checking
+rule CNVpytor_plot_extended:
+    input:
+        bed="../output/DNM/{family}.{window}.AnnotSV.DNM.extended.bed",
+    output:
+        "../output/plots/{family}/extended_{family}.{window}.plot.done",
+    params:
+        pytors=get_CNVpytor_family_pytors,
+        regions=get_plot_regions_extended,
+        out=get_plot_out_extended,
+    log:
+        o="../logs/plot_extend/{family}.{window}.o",
+        e="../logs/plot_extend/{family}.{window}.e",        
+    resources:
+        wallltime=1,
+    threads: 1
+    conda:
+        "/home/azoopatel/miniconda3/envs/CNVpytor/"
+    shell:
+        "cnvpytor -root {params.pytors} -plot regions {params.regions} "
+        "{wildcards.window} -o {params.out} "
+        "> {log.o} 2> {log.e} && touch {output}"
+

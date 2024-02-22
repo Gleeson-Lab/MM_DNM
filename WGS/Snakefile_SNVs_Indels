@@ -1,0 +1,205 @@
+import os.path
+
+samples = []
+#glob_wildcards("../input/{sample}.cram").sample
+
+with open("../input/trios.samples") as samples_file:
+    for line in samples_file:
+        samples.append(line[:-1])
+
+groups = glob_wildcards("../resources/intervals/intervalfile_{group}.list").group
+chroms=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','X','Y']
+
+rule all:
+    input:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.reorder.vcf",
+
+rule VEP:
+    input:
+        vcf="../output/merged_vcfs/DNM_annotation/joint.multisplit.VQSR.CGP.ann.chr{chrom}.vcf.gz",
+        hapmap="../resources/hapmap_3.3.hg38.vcf.gz",
+        ref="../resources/Homo_sapiens_assembly38.fasta",
+    output:
+        vcf="../output/merged_vcfs/VEP/joint.multisplit.VQSR.CGP.ann.vep.chr{chrom}.vcf",
+    params:
+        config="VEP_CONFIG.sh",
+        dir="/projects/ps-gleesonlab7/gleeson3/resources/vep_106",
+        plugin="dbNSFP,/projects/ps-gleesonlab7/gleeson3/resources/dbnsfp/dbNSFP4.1a.gz,CADD_phred,MetaSVM_pred,MetaSVM_rankscore,Polyphen2_HDIV_score,SIFT_pred,MPC,MTR,pLI,pLI_values,gnomAD_exomes_AC,gnomAD_exomes_AF,gnomAD_exomes_AN,SplicAI,SpliceRegion,DisGeNET,Phenotypes,Mastermind",
+        plugin_dir="/projects/ps-gleesonlab7/gleeson3/resources/vep_110/plugins",
+    log:
+        o="../logs/VEP/chr{chrom}.log",
+        e="../logs/VEP/chr{chrom}.err",
+    threads: 1
+    conda:
+        "/home/azoopatel/miniconda3/envs/snakemake/",
+    resources:
+        walltime=48,
+    shell:
+        "module load GenomeAnalysisTK && "
+        "module load samtools && "
+        "source {params.config} && "
+        "perl {params.dir}/ensembl-vep/vep "
+        "-v -assembly \"GRCh38\" --everything --terms \"SO\" "
+        "--cache "
+        "--canonical "
+        "--tsl "
+        "--dir_cache {params.dir} "
+        "--offline "
+        "--dir {params.dir} "
+        "-s homo_sapiens "
+        "--format \"vcf\" "
+        "--dir_plugins {params.plugin_dir} "
+        "--plugin {params.plugin} "
+        "--fasta {input.ref} "
+        "--vcf "
+        "-i {input.vcf} "
+        "--force_overwrite "
+        "-o {output.vcf} > {log.o} 2> {log.e}"
+
+rule DNM_filter:
+    input:
+        "../output/merged_vcfs/VEP/joint.multisplit.VQSR.CGP.ann.vep.chr{chrom}.vcf",
+    output:
+        "../output/merged_vcfs/VEP/joint.multisplit.VQSR.CGP.ann.vep.DNM.chr{chrom}.vcf.gz",
+    log:
+        "../logs/DNM_filter/chr{chrom}.err",
+    threads: 1
+    conda:
+        "/home/azoopatel/miniconda3/envs/snakemake/",
+    resources:
+        walltime=48,
+    shell:
+        "module load samtools && "
+        "egrep \"#|DeNovo\" {input} | bgzip > {output} 2> {log} && "
+        "tabix -p vcf {output}"
+
+rule spliceAI:
+    input:
+        vcf="../output/merged_vcfs/VEP/joint.multisplit.VQSR.CGP.ann.vep.DNM.chr{chrom}.vcf.gz",
+        ref="../resources/Homo_sapiens_assembly38.fasta",
+    output:
+        "../output/merged_vcfs/SpliceAI/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.chr{chrom}.vcf.gz",
+    log:
+        o="../logs/SpliceAI/chr{chrom}.log",
+        e="../logs/SpliceAI/chr{chrom}.err",
+    threads: 4
+    singularity:
+        "/projects/ps-gleesonlab8/Pipelines/singularity/single_tools/spiceAI.sif",
+    resources:
+        walltime=8,
+    params:
+        genome_build="grch38",
+    shell:
+        "spliceai -I {input.vcf} -O {output} -R {input.ref} "
+        "-A {params.genome_build} > {log.o} 2> {log.e}"
+
+rule greenvaran_gunzip:
+    input:
+        "../output/merged_vcfs/SpliceAI/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.chr{chrom}.vcf.gz",
+    output:
+        "../output/merged_vcfs/SpliceAI/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.chr{chrom}.vcf",
+    shell:
+        "gunzip -c {input} > {output}"
+
+rule greenvaran:
+    input:
+        vcf="../output/merged_vcfs/SpliceAI/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.chr{chrom}.vcf",
+        db="../resources/GRCh38_GREEN-DB.bed.gz",
+        dbschema="../resources/greendb_schema_v2.5.json",
+        config="../resources/prioritize_smallvars.json",
+    output:
+        vcf="../output/merged_vcfs/greenvaran/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.chr{chrom}.annotated.vcf.gz",
+    #singularity:
+    #    "/projects/ps-gleesonlab8/User/arzoo/NTD_WGS_GMKF/SV_pipeline/resources/greenvaran.sif",
+    conda:
+        "/home/azoopatel/miniconda3/envs/nextflow/",
+    log:
+        o="../logs/greenvaran/chr{chrom}.log",
+        e="../logs/greenvaran/chr{chrom}.err",
+    threads: 4
+    resources:
+        walltime=8,
+    params:
+        greenvaran="/home/azoopatel/tools/GREEN-VARAN/workflow/main.nf",
+        dir="../output/merged_vcfs/greenvaran/",
+        chrom="{chrom}",
+    shell:
+        "nextflow {params.greenvaran} --input {input.vcf} "
+        "--build GRCh38 --out {params.dir} --scores all "
+        "--regions all --AF --greenvaran_config {input.config} "
+        "--greenvaran_dbschema {input.dbschema} --chrom {params.chrom}"
+
+rule greenvaran_combine:
+    input:
+        expand("../output/merged_vcfs/greenvaran/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.chr{chrom}.annotated.vcf.gz",chrom=chroms),
+    output:
+        "../output/merged_vcfs/greenvaran/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.vcf.gz",
+    shell:
+        "bcftools concat {input} -O z -o {output} && "
+        "tabix -p vcf {output}"
+
+rule generate_avinput:
+    input:
+        "../output/merged_vcfs/greenvaran/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.vcf.gz",
+    output:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.avinput",
+    shell:
+        #""" zgrep -v "##" {input} | """
+        """ zcat {input} | """
+        """ awk -v OFS="\\t" "\$5!~/,/ {{print \$1, \$2, \$2+length(\$4)-1, \$4, \$5, \$0}}"  """
+        """ >> {output} """
+
+rule annovar_gnomad:
+    input:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.avinput",
+    output:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt",
+    params:
+        prefix="../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated"
+    shell:
+        "/home/jis215/tools/annovar/table_annovar.pl {input} "
+        "/home/jis215/tools/annovar/humandb/ -buildver hg38 "
+        "-out {params.prefix} -remove -protocol gnomad312_genome "
+        "-operation f -nastring . -otherinfo"
+
+rule sperate_header:
+    input:
+        "../output/merged_vcfs/greenvaran/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.vcf.gz",
+    output:
+        "../output/merged_vcfs/greenvaran/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.vcf.header",
+    shell:
+        "zcat {input} | grep '#' > {output}"
+
+rule seperate_gnaomad:
+    input:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt",
+    output:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.gnomad",
+    shell:
+        "grep -v \"##\" {input} | cut -f 6 > {output}"
+
+rule seperate_vcf:
+    input:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt",
+    output:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.vcf",
+    shell:
+        "grep -v \"##\" {input} | cut -f 22- > {output}"
+
+rule reorder:
+    input:
+        gnomad="../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.gnomad",
+        vcf="../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.vcf",
+    output:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.reorder",
+    shell:
+        "paste {input.vcf} {input.gnomad} | grep -v Otherinfo1 > {output}"
+
+rule add_header:
+    input:
+        header="../output/merged_vcfs/greenvaran/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.vcf.header",
+        vcf="../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.reorder",
+    output:
+        "../output/merged_vcfs/annovar/joint.multisplit.VQSR.CGP.ann.vep.DNM.spliceAI.annotated.hg38_multianno.txt.reorder.vcf",
+    shell:
+        "cat {input.header} {input.vcf} > {output}"
