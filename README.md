@@ -22,9 +22,11 @@ De novo variant calling from WXS and WGS can be found in [https://github.com/Gle
 
 -------------------------------------
 
-# Pipeline for spatial transcriptomic
+# Pipeline for spatial transcriptomics
 
 Notebooks and scripts for spatial transcriptomic analysis with MERFISH can be found in [https://github.com/Gleeson-Lab/MM_DNM/tree/main/MERFISH](https://github.com/Gleeson-Lab/MM_DNM/tree/main/MERFISH).
+
+Notebook to process ScTyping for spatial transcriptomic analysis with MERFISH can be found in [https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/plot_cell_comp.r](https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/MM_DNM_Typing.ipynb).
 
 -------------------------------------
 
@@ -34,7 +36,7 @@ Code to conduct the DNM burden analysis can be found in [https://github.com/Glee
 
 Code to conduct the network colocalization can be foudn in [https://github.com/Gleeson-Lab/MM_DNM/tree/main/Network](https://github.com/Gleeson-Lab/MM_DNM/tree/main/Network), and network propagation analysis can be found in [https://github.com/Gleeson-Lab/MM_DNM/tree/main/Network%20propagation](https://github.com/Gleeson-Lab/MM_DNM/tree/main/Network%20propagation)
 
-Code to plot MERFISH data can be found in [https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/plot_cell_comp.r](https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/plot_cell_comp.r).
+Code to plot MERFISH expression data can be found in [https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/plot_cell_comp.r](https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/plot_cell_comp.r), to plot clustering data can be found in [https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/MM_DNM_Cluster-Plotting.ipynb](https://github.com/Gleeson-Lab/MM_DNM/blob/main/MERFISH/MM_DNM_Cluster-Plotting.ipynb). 
 
 Code to plot functional experiments can be found in [https://github.com/Gleeson-Lab/MM_DNM/tree/main/Functional%20experiment](https://github.com/Gleeson-Lab/MM_DNM/tree/main/Functional%20experiment).
 
